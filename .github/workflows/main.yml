@@ -1,0 +1,84 @@
+name: Build Kernel (4.9 - crDroid)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Setiap Sabtu pukul 00:00 UTC
+    - cron: "0 0 * * 6"
+  push:
+    branches:
+      - HEAD
+  pull_request:
+    branches:
+      - HEAD
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_MAXSIZE: "2G"
+      CCACHE_HARDLINK: "true"
+      KERNEL_DEFCONFIG: "sdm670_defconfig"
+      KERNEL_CMDLINE: "ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- O=out"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: "true"
+          fetch-depth: 100
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+
+      - name: Install dependencies & Proton‑Clang
+        run: |
+          sudo apt-get update -y
+          sudo apt install -y \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            aria2 binutils make python3 libssl-dev \
+            build-essential bc bison flex unzip \
+            ca-certificates xz-utils mkbootimg cpio \
+            device-tree-compiler git git-lfs
+
+          # Download & extract Proton‑Clang v20210522
+          PROTON_URL="https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip"
+          aria2c -j$(nproc --all) $PROTON_URL
+          unzip -q 20210522.zip
+          mv proton-clang-20210522 proton-clang
+
+          # Clone AnyKernel3 & patch
+          git clone https://github.com/osm0sis/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' AnyKernel3/anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md
+
+          # Setup memkernel module
+          curl -LSs "https://raw.githubusercontent.com/Poko-Apps/MemKernel/main/kernel/setup.sh" | bash -s M vinn
+
+      - name: Get build timestamp
+        id: get_time
+        run: echo "TIME=$(TZ=UTC+3 date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Build Kernel-With-KernelSU
+        run: |
+          export PATH=$(pwd)/proton-clang/bin/:$PATH
+          make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC="ccache clang"
+          make $KERNEL_CMDLINE CC="ccache clang" -j$(nproc --all)
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3
+
+      - name: Upload Kernel-SU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nyan_kernel-KSU-${{ steps.get_time.outputs.TIME }}
+          path: AnyKernel3/*
+
+      - name: Upload memkernel module
+        uses: actions/upload-artifact@v4
+        with:
+          name: memodule
+          path: out/drivers/memkernel/vinn_memk.ko
