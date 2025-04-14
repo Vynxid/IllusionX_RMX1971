@@ -47,7 +47,7 @@ jobs:
           # Download & extract Proton‑Clang v20210522
           PROTON_URL="https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip"
           aria2c -j$(nproc --all) $PROTON_URL
-          unzip -q 20210522.zip
+          unzip -q proton-clang-20210522.zip
           mv proton-clang-20210522 proton-clang
 
           # Clone AnyKernel3 & patch
